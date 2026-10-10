@@ -18,6 +18,11 @@ def session_from(id:str,run:Path):
 def bootstrap():
     existing=research/'artifacts'/'analysis'/'va_001_031026_1'
     if (existing/'analysis.json').is_file(): store.session('va-001-031026-1',existing)
+    # A server restart must not strand a completed core run in a fake processing state.
+    for job in store.processing_jobs():
+        output=Path(job['output_dir'])
+        if safe_under(output,runs_root) and (output/'analysis.json').is_file():
+            store.session(job['id'],output);store.update_job(job['id'],'complete','Recovered completed artifact after server restart.',job['id'])
 @app.get('/api/input-videos')
 def inputs(): return {'videos':[p.name for p in research.glob('*.mp4') if p.is_file()]}
 @app.get('/api/sessions/{session_id}',response_model=AnalysisSession)
@@ -32,11 +37,14 @@ def create_job(req:CreateJobRequest):
     job_id=uuid.uuid4().hex; output=(runs_root/job_id).resolve(); command=['uv','run','formicai','analyze-video',str(source),'--output',str(output),'--detector-role','own_colony','--confidence','0.25']
     store.job(job_id,'processing',source.name,output,command)
     def execute():
-        completed=subprocess.run(command,cwd=research,text=True,capture_output=True,check=False)
-        log=(completed.stdout+'\n'+completed.stderr)[-4000:]
-        if completed.returncode==0 and (output/'analysis.json').is_file():
-            store.session(job_id,output);store.update_job(job_id,'complete',log,job_id)
-        else: store.update_job(job_id,'failed',log)
+        try:
+            completed=subprocess.run(command,cwd=research,capture_output=True,check=False)
+            log=(completed.stdout+ b'\n'+completed.stderr).decode('utf-8',errors='replace')[-4000:]
+            if completed.returncode==0 and (output/'analysis.json').is_file():
+                store.session(job_id,output);store.update_job(job_id,'complete',log,job_id)
+            else: store.update_job(job_id,'failed',log)
+        except Exception as error:
+            store.update_job(job_id,'failed',f'Runner exception: {error}')
     threading.Thread(target=execute,daemon=True).start()
     return ProcessingJob(id=job_id,status='processing',source_name=source.name)
 @app.get('/api/jobs/{job_id}',response_model=ProcessingJob)

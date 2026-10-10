@@ -17,6 +17,11 @@ class Store:
         with self.connect() as db:
             row=db.execute('SELECT id,status,source_name,output_dir,command_json,message,session_id FROM jobs WHERE id=?',(id,)).fetchone()
         return None if not row else dict(zip(('id','status','source_name','output_dir','command_json','message','session_id'),row))
+    def processing_jobs(self):
+        with self.connect() as db:
+            rows=db.execute("SELECT id,status,source_name,output_dir,command_json,message,session_id FROM jobs WHERE status='processing'").fetchall()
+        fields=('id','status','source_name','output_dir','command_json','message','session_id')
+        return [dict(zip(fields,row)) for row in rows]
     def session(self,id:str,artifact_dir:Path,status:str='ready')->None:
         with self.connect() as db: db.execute('INSERT OR REPLACE INTO sessions VALUES (?,?,?)',(id,str(artifact_dir),status))
     def get_session(self,id:str):

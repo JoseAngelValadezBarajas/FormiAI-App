@@ -19,4 +19,11 @@ npm install
 npm run dev
 ```
 
-Configure Vite's dev proxy for `/api` to `http://localhost:8000` before browser integration. The API reads the real completed analysis at `artifacts/analysis/va_001_031026_1` only through its artifact contract.
+Vite ya incluye un proxy de desarrollo para `/api` hacia `http://127.0.0.1:8000`. La API lee el análisis real completado en `artifacts/analysis/va_001_031026_1` únicamente a través de su contrato de artifacts.
+
+## API
+
+- `GET /api/input-videos` lists only `.mp4` files directly under the configured research root.
+- `POST /api/jobs` accepts a validated `source_name`, builds a fixed `formicai analyze-video` command, and persists job state in SQLite.
+- `GET /api/jobs/{id}` returns the persisted status.
+- `GET /api/sessions/{id}` and its artifact routes expose only registered artifact directories.
