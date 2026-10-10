@@ -1,5 +1,6 @@
 from app.models import AnalysisSummary, CreateJobRequest
 from app.storage import Store
+from app.main import ARTIFACT_NAMES
 
 def test_summary_contract():
     assert AnalysisSummary(total_frames=1,duration_seconds=1,mean_visible_ants=0,total_detections=0).total_frames == 1
@@ -16,3 +17,6 @@ def test_store_lists_processing_jobs(tmp_path):
     store=Store(tmp_path/'formiai.sqlite3')
     store.job('job-1','processing','valid.mp4',tmp_path/'run',['uv','run'])
     assert [job['id'] for job in store.processing_jobs()] == ['job-1']
+
+def test_export_allowlist_covers_core_contract():
+    assert {'video_analysis.predictions.jsonl','video_analysis_tracks.tracks.jsonl','video_analysis.run.json','video_analysis_tracks.run.json'} <= set(ARTIFACT_NAMES)

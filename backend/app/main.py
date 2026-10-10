@@ -6,13 +6,14 @@ from fastapi.responses import FileResponse
 from .models import *
 from .storage import Store
 research=Path(os.environ.get('FORMIAI_RESEARCH_ROOT',r'C:\Dev\Ants-2')).resolve(); runs_root=(research/'artifacts'/'product_runs').resolve(); store=Store(Path(os.environ.get('FORMIAI_DATA_DIR',Path.cwd().parent/'data'))/'formiai.sqlite3'); app=FastAPI(title='FormiAI Product Adapter')
+ARTIFACT_NAMES=('analyzed_video.mp4','occupancy_heatmap.png','activity_timeline.csv','analysis.json','analysis_summary.md','video_analysis.predictions.jsonl','video_analysis_tracks.tracks.jsonl','video_analysis.run.json','video_analysis_tracks.run.json')
 def safe_under(path:Path,parent:Path)->bool:
     try:path.resolve().relative_to(parent.resolve());return True
     except ValueError:return False
 def session_from(id:str,run:Path):
  p=run/'analysis.json'
  if not p.exists(): raise HTTPException(404,'No configured analysis artifact')
- a=json.loads(p.read_text()); s=a['summary']; files=['analyzed_video.mp4','occupancy_heatmap.png','activity_timeline.csv','analysis.json','analysis_summary.md']
+ a=json.loads(p.read_text()); s=a['summary']; files=ARTIFACT_NAMES
  return AnalysisSession(id=id,status='ready',summary=AnalysisSummary(total_frames=s['total_frames'],duration_seconds=s['duration_seconds'],mean_visible_ants=s['mean_visible_ants'],total_detections=s['total_detections']),timeline=[TimelineSample(timestamp_seconds=x['timestamp_seconds'],visible_ants=x['visible_ants'],activity_index=x['activity_index']) for x in a['activity_timeline']],occupancy=SpatialOccupancy(grid_width=a['spatial_heatmap']['grid_width'],grid_height=a['spatial_heatmap']['grid_height'],heatmap_url=f'/api/sessions/{id}/artifacts/occupancy_heatmap.png'),provenance=Provenance(detector=a['detector'],tracker=a['tracker'],thresholds=a['thresholds'],source_sha256=a['source']['sha256']),exports=[AvailableExport(name=f,url=f'/api/sessions/{id}/artifacts/{f}') for f in files if (run/f).exists()])
 @app.on_event('startup')
 def bootstrap():
@@ -54,6 +55,7 @@ def get_job(job_id:str):
     return ProcessingJob(id=row['id'],status=row['status'],source_name=row['source_name'],session_id=row['session_id'],message=row['message'])
 @app.get('/api/sessions/{session_id}/artifacts/{name}')
 def artifact(session_id:str,name:str):
+ if name not in ARTIFACT_NAMES: raise HTTPException(404)
  row=store.get_session(session_id)
  if not row: raise HTTPException(404)
  run=Path(row['artifact_dir']).resolve(); f=(run/Path(name).name).resolve()
