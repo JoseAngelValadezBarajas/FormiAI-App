@@ -21,6 +21,8 @@ npm run dev
 
 Vite ya incluye un proxy de desarrollo para `/api` hacia `http://127.0.0.1:8000`. La API lee el análisis real completado en `artifacts/analysis/va_001_031026_1` únicamente a través de su contrato de artifacts.
 
+FFmpeg con `libx264` debe estar disponible en `PATH`. FormiAI conserva `analyzed_video.mp4` como artifact científico y genera una sola vez `analyzed_video.web.mp4` como derivado H.264/yuv420p para reproducción web; su validación y provenance se guardan en `presentation_media.json`.
+
 ## API
 
 - `GET /api/input-videos` lists only `.mp4` files directly under the configured research root.
