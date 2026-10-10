@@ -54,12 +54,22 @@ class AnalysisSession(BaseModel):
     exports: list[AvailableExport] = Field(default_factory=list)
 
 
+class ProgressState(BaseModel):
+    schema_version: Literal[1] = 1
+    fps: float | None = None
+    frame_count: int | None = None
+    processed_through_frame: int = -1
+    batch_count: int = 0
+
+
 class ProcessingJob(BaseModel):
     id: str
     status: Literal['processing', 'complete', 'failed']
     source_name: str
     session_id: str | None = None
     message: str = ''
+    source_video_url: str | None = None
+    progress: ProgressState = Field(default_factory=ProgressState)
 
 
 class CreateJobRequest(BaseModel):

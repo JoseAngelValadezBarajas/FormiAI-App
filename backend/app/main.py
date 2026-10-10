@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -7,11 +8,11 @@ import threading
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .media import PRESENTATION_PROVENANCE, PRESENTATION_VIDEO, MediaPreparationError, prepare_presentation_media, presentation_ready
-from .models import AnalysisSession, AnalysisSummary, AvailableExport, CreateJobRequest, PresentationVideo, ProcessingJob, Provenance, SpatialOccupancy, TimelineSample
+from .models import AnalysisSession, AnalysisSummary, AvailableExport, CreateJobRequest, PresentationVideo, ProcessingJob, ProgressState, Provenance, SpatialOccupancy, TimelineSample
 from .storage import Store
 
 research = Path(os.environ.get('FORMIAI_RESEARCH_ROOT', r'C:\Dev\Ants-2')).resolve()
@@ -19,6 +20,7 @@ runs_root = (research / 'artifacts' / 'product_runs').resolve()
 store = Store(Path(os.environ.get('FORMIAI_DATA_DIR', Path.cwd().parent / 'data')) / 'formiai.sqlite3')
 app = FastAPI(title='FormiAI Product Adapter')
 ARTIFACT_NAMES = ('analyzed_video.mp4', PRESENTATION_VIDEO, PRESENTATION_PROVENANCE, 'occupancy_heatmap.png', 'activity_timeline.csv', 'analysis.json', 'analysis_summary.md', 'video_analysis.predictions.jsonl', 'video_analysis_tracks.tracks.jsonl', 'video_analysis.run.json', 'video_analysis_tracks.run.json')
+PROGRESS_DIRECTORY = 'formiai_progress'
 
 
 def safe_under(path: Path, parent: Path) -> bool:
@@ -46,6 +48,51 @@ def session_from(session_id: str, run: Path, status: str = 'ready') -> AnalysisS
 def register_ready_session(session_id: str, run: Path) -> None:
     prepare_presentation_media(run)
     store.session(session_id, run)
+
+
+def progress_from(run: Path) -> ProgressState:
+    """Read only complete batches published by atomic rename in Ants-2."""
+    directory = run / PROGRESS_DIRECTORY
+    manifest = directory / 'manifest.json'
+    if not manifest.is_file():
+        return ProgressState()
+    try:
+        metadata = json.loads(manifest.read_text(encoding='utf-8'))
+        batches = sorted(directory.glob('batch-*.json'))
+        completed = -1
+        valid = 0
+        for path in batches:
+            batch = json.loads(path.read_text(encoding='utf-8'))
+            if batch.get('schema_version') != 1 or batch.get('kind') != 'formiai.progress.batch':
+                continue
+            completed = max(completed, int(batch['processed_through_frame']))
+            valid += 1
+        return ProgressState(fps=float(metadata['fps']), frame_count=int(metadata['frame_count']),
+                             processed_through_frame=completed, batch_count=valid)
+    except (OSError, ValueError, KeyError, TypeError):
+        return ProgressState()
+
+
+def progressive_batches(run: Path, after: int) -> list[dict]:
+    directory = run / PROGRESS_DIRECTORY
+    result: list[dict] = []
+    for path in sorted(directory.glob('batch-*.json')):
+        try:
+            batch = json.loads(path.read_text(encoding='utf-8'))
+            sequence = int(batch['sequence'])
+            if sequence > after and batch.get('schema_version') == 1 and batch.get('kind') == 'formiai.progress.batch':
+                result.append(batch)
+        except (OSError, ValueError, KeyError, TypeError):
+            # A .json is expected to be complete due to os.replace; malformed files are never events.
+            continue
+    return result
+
+
+def job_response(row: dict) -> ProcessingJob:
+    return ProcessingJob(id=row['id'], status=row['status'], source_name=row['source_name'],
+                         session_id=row['session_id'], message=row['message'],
+                         source_video_url=f"/api/jobs/{row['id']}/source-video",
+                         progress=progress_from(Path(row['output_dir'])))
 
 
 @app.on_event('startup')
@@ -84,9 +131,12 @@ def create_job(request: CreateJobRequest) -> ProcessingJob:
     source = (research / request.source_name).resolve()
     if not safe_under(source, research) or not source.is_file():
         raise HTTPException(404, 'Input video is not an approved research-root video')
+    active = store.processing_for_source(source.name)
+    if active:
+        return job_response(active)
     job_id = uuid.uuid4().hex
     output = (runs_root / job_id).resolve()
-    command = ['uv', 'run', 'formicai', 'analyze-video', str(source), '--output', str(output), '--detector-role', 'own_colony', '--confidence', '0.25']
+    command = ['uv', 'run', 'formicai', 'analyze-video', str(source), '--output', str(output), '--detector-role', 'own_colony', '--confidence', '0.25', '--progress-dir', str(output / PROGRESS_DIRECTORY)]
     store.job(job_id, 'processing', source.name, output, command)
 
     def execute() -> None:
@@ -102,7 +152,7 @@ def create_job(request: CreateJobRequest) -> ProcessingJob:
             store.update_job(job_id, 'failed', f'Runner or presentation-media exception: {error}')
 
     threading.Thread(target=execute, daemon=True).start()
-    return ProcessingJob(id=job_id, status='processing', source_name=source.name)
+    return job_response(store.get_job(job_id))
 
 
 @app.get('/api/jobs/{job_id}', response_model=ProcessingJob)
@@ -110,7 +160,48 @@ def get_job(job_id: str) -> ProcessingJob:
     row = store.get_job(job_id)
     if not row:
         raise HTTPException(404, 'Unknown job')
-    return ProcessingJob(id=row['id'], status=row['status'], source_name=row['source_name'], session_id=row['session_id'], message=row['message'])
+    return job_response(row)
+
+
+@app.get('/api/jobs/{job_id}/source-video')
+def source_video(job_id: str) -> FileResponse:
+    row = store.get_job(job_id)
+    if not row:
+        raise HTTPException(404, 'Unknown job')
+    source = (research / row['source_name']).resolve()
+    if not safe_under(source, research) or not source.is_file():
+        raise HTTPException(404, 'Approved source video is unavailable')
+    return FileResponse(source, media_type='video/mp4')
+
+
+@app.get('/api/jobs/{job_id}/events')
+async def job_events(job_id: str, request: Request, after: int = Query(-1, ge=-1)) -> StreamingResponse:
+    """SSE replay stream. Event id is the immutable progress batch sequence."""
+    row = store.get_job(job_id)
+    if not row:
+        raise HTTPException(404, 'Unknown job')
+    try:
+        cursor = max(after, int(request.headers.get('last-event-id', '-1')))
+    except ValueError:
+        cursor = after
+    run = Path(row['output_dir'])
+
+    async def events():
+        nonlocal cursor
+        yield f"event: progress\ndata: {json.dumps(progress_from(run).model_dump())}\n\n"
+        while True:
+            for batch in progressive_batches(run, cursor):
+                cursor = int(batch['sequence'])
+                yield f"id: {cursor}\nevent: detections\ndata: {json.dumps(batch, separators=(',', ':'))}\n\n"
+            current = store.get_job(job_id)
+            if current and current['status'] != 'processing':
+                kind = 'complete' if current['status'] == 'complete' else 'error'
+                yield f"event: {kind}\ndata: {json.dumps(job_response(current).model_dump())}\n\n"
+                return
+            if await request.is_disconnected():
+                return
+            await asyncio.sleep(.2)
+    return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
 @app.get('/api/sessions/{session_id}/artifacts/{name}')

@@ -1,2 +1,3 @@
-import {describe,expect,it} from 'vitest';import{timestampFromOffset}from'./timeline';
+import {describe,expect,it} from 'vitest';import{timestampFromOffset}from'./timeline';import {canPlayFrame,frameAtTime} from './progress';
 describe('timeline',()=>{it('clamps a click to the analyzed video duration',()=>{expect(timestampFromOffset(50,100,40)).toBe(20);expect(timestampFromOffset(-4,100,40)).toBe(0);expect(timestampFromOffset(120,100,40)).toBe(40)})});
+describe('progressive overlay synchronization',()=>{it('uses only the exact scientific frame, never a neighboring box',()=>{const frames=new Map([[12,{frame_index:12,timestamp_seconds:1,detections:[]}]]);expect(frameAtTime(frames,1.01,12)?.frame_index).toBe(12);expect(frameAtTime(frames,1.084,12)).toBeUndefined();expect(canPlayFrame(1.084,12,12)).toBe(false)})});
