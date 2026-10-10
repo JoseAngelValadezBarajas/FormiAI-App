@@ -42,6 +42,18 @@ def video_stream(probe: dict) -> dict:
     return stream
 
 
+def frame_timestamps(path: Path) -> list[float]:
+    command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'csv=p=0', str(path)]
+    completed = subprocess.run(command, capture_output=True, check=False)
+    if completed.returncode:
+        raise MediaPreparationError(completed.stderr.decode('utf-8', errors='replace')[-1000:])
+    return [float(line.rstrip(',').strip()) for line in completed.stdout.decode('utf-8').splitlines() if line.strip()]
+
+
+def timestamps_match(source: list[float], presentation: list[float]) -> bool:
+    return len(source) == len(presentation) and all(abs(left - right) <= 0.001 for left, right in zip(source, presentation))
+
+
 def valid_presentation(source_probe: dict, presentation_probe: dict) -> bool:
     source_video, presentation_video = video_stream(source_probe), video_stream(presentation_probe)
     source_duration = float(source_probe['format']['duration'])
@@ -68,7 +80,7 @@ def presentation_ready(run: Path) -> bool:
         return cached[1]
     try:
         metadata = json.loads(provenance.read_text(encoding='utf-8'))
-        valid = metadata.get('source_sha256') == sha256(source) and metadata.get('presentation_sha256') == sha256(presentation) and valid_presentation(ffprobe(source, True), ffprobe(presentation, True))
+        valid = metadata.get('source_sha256') == sha256(source) and metadata.get('presentation_sha256') == sha256(presentation) and valid_presentation(ffprobe(source, True), ffprobe(presentation, True)) and timestamps_match(frame_timestamps(source), frame_timestamps(presentation))
     except (OSError, ValueError, KeyError, MediaPreparationError):
         valid = False
     _validation_cache[str(run.resolve())] = (fingerprint, valid)
@@ -92,7 +104,7 @@ def prepare_presentation_media(run: Path) -> dict:
         if completed.returncode:
             raise MediaPreparationError(completed.stderr.decode('utf-8', errors='replace')[-2000:])
         presentation_probe = ffprobe(temporary_path, True)
-        if not valid_presentation(source_probe, presentation_probe):
+        if not valid_presentation(source_probe, presentation_probe) or not timestamps_match(frame_timestamps(source), frame_timestamps(temporary_path)):
             raise MediaPreparationError('Presentation media did not preserve validated video properties')
         metadata = {
             'schema_version': 1,

@@ -1,6 +1,6 @@
 import json
 
-from app.media import PRESENTATION_PROVENANCE, PRESENTATION_VIDEO, presentation_ready, valid_presentation
+from app.media import PRESENTATION_PROVENANCE, PRESENTATION_VIDEO, presentation_ready, timestamps_match, valid_presentation
 
 
 def probe(codec: str, duration: float = 4.0, frames: str = '240'):
@@ -12,6 +12,11 @@ def test_valid_presentation_requires_browser_codec_and_temporal_match():
     assert not valid_presentation(probe('mpeg4'), probe('h264', duration=4.2))
     assert not valid_presentation(probe('mpeg4'), probe('mpeg4'))
     assert not valid_presentation(probe('mpeg4'), probe('h264', frames='239'))
+
+
+def test_timestamp_comparison_requires_the_same_frame_sequence():
+    assert timestamps_match([0.0, 0.016661, 0.033322], [0.0, 0.016661, 0.033322])
+    assert not timestamps_match([0.0, 0.016661], [0.0, 0.033322])
 
 
 def test_presentation_is_not_available_without_validated_provenance(tmp_path):
