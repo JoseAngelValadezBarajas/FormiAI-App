@@ -7,3 +7,6 @@ uploads/
 *.mp4
 *.pt
 *.zip
+node_modules/
+dist/
+runs/
