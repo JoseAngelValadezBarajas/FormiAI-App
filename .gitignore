@@ -1,0 +1,9 @@
+.env
+.venv/
+__pycache__/
+data/
+artifacts/
+uploads/
+*.mp4
+*.pt
+*.zip
