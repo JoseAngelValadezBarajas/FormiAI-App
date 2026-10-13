@@ -70,3 +70,28 @@ presented as a completed scientific review. The source-file duration/FPS
 assumption is inherited from the scientific runner (`timestamp = index / fps`);
 variable-frame-rate sources need a scientific-pipeline timestamp model before
 they can be represented with stricter PTS fidelity.
+
+## Final certification: CUDA and browser (2026-10-12)
+
+The RTX 4060 Laptop GPU is enabled with the official PyTorch CUDA 12.6 wheels:
+`torch 2.13.0+cu126`, `torchvision 0.28.0+cu126`, Python 3.12.10, NVIDIA driver
+617.42, and compute capability 8.9. These are explicit `ml` dependencies in
+Ants-2's lockfile so `uv sync --extra ml --group dev` preserves the GPU build.
+`FORMIAI_DEVICE` defaults to `cuda:0` and may be explicitly set to `cpu` on a
+non-CUDA host; the execution device does not alter detector identity, weights,
+thresholds, or artifacts.
+
+On the same first 32 1920x1080 frames of `031026_1.mp4`, using OD-E2-N,
+640 pixels, confidence .25 and BoT-SORT: CPU measured 4.765 inference FPS,
+4.284 pipeline FPS, and 6.088 s to first processed frame. CUDA measured 42.715
+inference FPS, 23.536 pipeline FPS, and 0.443 s to first frame. PyTorch reported
+55.7 MiB peak allocated VRAM; `nvidia-smi` observed roughly 2.1 GiB total GPU
+memory while the complete product pipeline was active. These are measurements,
+not claims of changed scientific output.
+
+Playwright 1.64/Chromium performed a real 481-frame H.264 run through FastAPI,
+Vite, SSE and CUDA. It verified automatic start on selection, atomic batches,
+non-empty Canvas boxes with P-ID/confidence, buffering state, mobile Canvas
+resizing, final Review, exports, and no console or non-aborted network errors.
+The test screenshots are written to `frontend/test-results/progressive-desktop.png`
+and `progressive-mobile.png` during certification.

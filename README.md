@@ -6,6 +6,7 @@ Product repo separate from `Ants-2`. It consumes versioned analysis artifacts th
 
 ```powershell
 $env:FORMIAI_RESEARCH_ROOT = 'C:\Dev\Ants-2'
+$env:FORMIAI_DEVICE = 'cuda:0' # use 'cpu' only when CUDA is unavailable
 cd backend
 uv sync
 uv run uvicorn app.main:app --reload --port 8000

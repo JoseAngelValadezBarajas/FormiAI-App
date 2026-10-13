@@ -20,3 +20,7 @@ def test_store_lists_processing_jobs(tmp_path):
 
 def test_export_allowlist_covers_core_contract():
     assert {'video_analysis.predictions.jsonl','video_analysis_tracks.tracks.jsonl','video_analysis.run.json','video_analysis_tracks.run.json'} <= set(ARTIFACT_NAMES)
+
+def test_product_runner_uses_configured_execution_device():
+    from app.main import analysis_device
+    assert analysis_device in {'cuda:0', 'cpu'} or analysis_device.startswith('cuda:')

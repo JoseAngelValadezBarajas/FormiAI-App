@@ -17,6 +17,7 @@ from .storage import Store
 
 research = Path(os.environ.get('FORMIAI_RESEARCH_ROOT', r'C:\Dev\Ants-2')).resolve()
 runs_root = (research / 'artifacts' / 'product_runs').resolve()
+analysis_device = os.environ.get('FORMIAI_DEVICE', 'cuda:0')
 store = Store(Path(os.environ.get('FORMIAI_DATA_DIR', Path.cwd().parent / 'data')) / 'formiai.sqlite3')
 app = FastAPI(title='FormiAI Product Adapter')
 ARTIFACT_NAMES = ('analyzed_video.mp4', PRESENTATION_VIDEO, PRESENTATION_PROVENANCE, 'occupancy_heatmap.png', 'activity_timeline.csv', 'analysis.json', 'analysis_summary.md', 'video_analysis.predictions.jsonl', 'video_analysis_tracks.tracks.jsonl', 'video_analysis.run.json', 'video_analysis_tracks.run.json')
@@ -136,7 +137,7 @@ def create_job(request: CreateJobRequest) -> ProcessingJob:
         return job_response(active)
     job_id = uuid.uuid4().hex
     output = (runs_root / job_id).resolve()
-    command = ['uv', 'run', 'formicai', 'analyze-video', str(source), '--output', str(output), '--detector-role', 'own_colony', '--confidence', '0.25', '--progress-dir', str(output / PROGRESS_DIRECTORY)]
+    command = ['uv', 'run', 'formicai', 'analyze-video', str(source), '--output', str(output), '--detector-role', 'own_colony', '--confidence', '0.25', '--device', analysis_device, '--progress-dir', str(output / PROGRESS_DIRECTORY)]
     store.job(job_id, 'processing', source.name, output, command)
 
     def execute() -> None:
