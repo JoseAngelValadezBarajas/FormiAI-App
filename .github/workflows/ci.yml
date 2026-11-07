@@ -49,6 +49,8 @@ jobs:
         run: npm run build
       - name: Unit tests
         run: npm test
+      - name: Install ffmpeg (synthetic test clip)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser sync suite (mocked API)
