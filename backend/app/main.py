@@ -290,12 +290,17 @@ async def job_events(job_id: str, request: Request, after: int = Query(-1, ge=-1
     run = Path(row['output_dir'])
 
     async def events():
-        nonlocal cursor
+        # Track what was sent instead of only a high-water mark: a batch published after a higher sequence
+        # (late or out of order) must still be delivered. `cursor` stays the floor for replay/reconnect.
+        delivered: set[int] = set()
         yield f"event: progress\ndata: {json.dumps(progress_from(run).model_dump())}\n\n"
         while True:
             for batch in progressive_batches(run, cursor):
-                cursor = int(batch['sequence'])
-                yield f"id: {cursor}\nevent: detections\ndata: {json.dumps(batch, separators=(',', ':'))}\n\n"
+                sequence = int(batch['sequence'])
+                if sequence in delivered:
+                    continue
+                delivered.add(sequence)
+                yield f"id: {sequence}\nevent: detections\ndata: {json.dumps(batch, separators=(',', ':'))}\n\n"
             current = store.get_job(job_id)
             if current and current['status'] != 'processing':
                 kind = {'complete': 'complete', 'cancelled': 'cancelled'}.get(current['status'], 'error')
