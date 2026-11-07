@@ -53,7 +53,6 @@ def test_in_order_batches_are_all_delivered(job):
     assert delivered_sequences(TestClient(main.app), 'late-batch') == [1, 2, 3]
 
 
-@pytest.mark.xfail(strict=True, reason='cursor advances past a sequence that is published later; it is never delivered')
 def test_batch_published_after_the_cursor_passed_it_is_still_delivered(job):
     store, run = job
     directory = run / main.PROGRESS_DIRECTORY
