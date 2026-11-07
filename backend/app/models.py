@@ -27,6 +27,7 @@ class Provenance(BaseModel):
     tracker: dict
     thresholds: dict
     source_sha256: str
+    model: dict | None = None  # FormiAI's declaration (id, experimental, ...); `detector` is what Ants-2 loaded
 
 
 class AvailableExport(BaseModel):
@@ -64,13 +65,15 @@ class ProgressState(BaseModel):
 
 class ProcessingJob(BaseModel):
     id: str
-    status: Literal['processing', 'complete', 'failed']
+    status: Literal['processing', 'complete', 'failed', 'cancelled']
     source_name: str
     session_id: str | None = None
     message: str = ''
     source_video_url: str | None = None
     progress: ProgressState = Field(default_factory=ProgressState)
+    model: dict | None = None
 
 
 class CreateJobRequest(BaseModel):
     source_name: str = Field(pattern=r'^[A-Za-z0-9_.-]+\.mp4$')
+    model: Literal['V2-E2', 'OD-E2-N'] = 'V2-E2'
