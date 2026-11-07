@@ -88,3 +88,6 @@
 .obs-ready { padding: 28px; max-width: 880px; }
 .obs-ready-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
 .obs-ready .obs-stage video { height: min(46vh, 426px); }
+
+
+/* Reserved height: selecting a box changes this text, and a layout shift under the pointer would corrupt a drag. */

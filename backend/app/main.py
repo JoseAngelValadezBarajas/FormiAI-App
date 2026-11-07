@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .media import PRESENTATION_PROVENANCE, PRESENTATION_VIDEO, MediaPreparationError, prepare_presentation_media, presentation_ready
+from .corrections import EXPORT_FILES, CorrectionError, CorrectionStore, list_exports, load_review, review_queue, source_info, write_export
 from .model_registry import DEFAULT_MODEL, MODEL_RECORD, MODELS, availability, build_command, record
 from .models import AnalysisSession, AnalysisSummary, AvailableExport, CreateJobRequest, PresentationVideo, ProcessingJob, ProgressState, Provenance, SpatialOccupancy, TimelineSample
 from .storage import Store
@@ -320,5 +321,141 @@ def artifact(session_id: str, name: str) -> FileResponse:
     if name == PRESENTATION_VIDEO and not presentation_ready(run):
         raise HTTPException(404, 'Validated presentation video is not available')
     if not file.is_file():
+        raise HTTPException(404)
+    return FileResponse(file)
+
+
+# --- Human review: corrections of detections, never of the analysis artifacts -------------------------------
+
+def correction_store() -> CorrectionStore:
+    return CorrectionStore(store.path)
+
+
+def review_context(session_id: str, verified: bool = False):
+    row = store.get_session(session_id)
+    if not row:
+        raise HTTPException(404, 'Unknown session')
+    run = Path(row['artifact_dir'])
+    try:
+        data = load_review(run)
+        source = source_info(data, research)
+    except (OSError, KeyError, ValueError, CorrectionError) as error:
+        raise HTTPException(404, f'This session has no reviewable analysis: {error}')
+    if verified and not source['verified']:
+        raise HTTPException(409, 'The source video is missing or does not match the analysed file (SHA-256)')
+    return run, data, source
+
+
+def guarded(action):
+    try:
+        return action()
+    except CorrectionError as error:
+        raise HTTPException(422, str(error))
+
+
+@app.get('/api/annotation/sessions')
+def annotation_sessions() -> dict:
+    """Every analysed video with the progress of its annotation work, for the Anotación list."""
+    corrections = correction_store()
+    items = []
+    for row in store.sessions():
+        entry = {'id': row['id'], 'status': row['status']}
+        try:
+            run = Path(row['artifact_dir'])
+            data = load_review(run)
+            source = source_info(data, research)
+        except (OSError, KeyError, ValueError, CorrectionError) as error:
+            items.append({**entry, 'reviewable': False, 'reason': str(error)})
+            continue
+        past = list_exports(data_dir / 'exports', row['id'])
+        items.append({**entry, 'reviewable': True, 'source': source, 'model': model_record_of(run), 'frame_count': len(data.frames),
+                      'counts': corrections.counts(row['id']), 'complete_frames': len(corrections.complete_frames(row['id'])),
+                      'last_export': past[-1] if past else None, 'last_activity': corrections.last_activity(row['id'])})
+    return {'sessions': items}
+
+
+@app.get('/api/sessions/{session_id}/review')
+def review(session_id: str) -> dict:
+    run, data, source = review_context(session_id)
+    return {'source': source, 'confidence_floor': data.confidence_floor, 'detector': data.detector, 'model': model_record_of(run),
+            'analysis_sha256': data.analysis_sha256,
+            'frames': [[[*b['bbox'], b['confidence'], b['track_id']] for b in boxes] for boxes in data.frames]}
+
+
+@app.get('/api/sessions/{session_id}/source-video')
+def session_source_video(session_id: str) -> FileResponse:
+    _, _, source = review_context(session_id, verified=True)
+    return FileResponse((research / source['name']).resolve(), media_type='video/mp4')
+
+
+@app.get('/api/sessions/{session_id}/review/state')
+def review_state(session_id: str) -> dict:
+    review_context(session_id)
+    corrections = correction_store()
+    return {'annotations': corrections.active(session_id), 'complete_frames': corrections.complete_frames(session_id)}
+
+
+@app.get('/api/sessions/{session_id}/review/queue')
+def review_queue_route(session_id: str, strategy: str = 'uncertain', limit: int = 50) -> dict:
+    _, data, source = review_context(session_id)
+    complete = set(correction_store().complete_frames(session_id))
+    return {'strategy': strategy, 'frames': guarded(lambda: review_queue(data, complete, strategy, limit, source['fps']))}
+
+
+@app.post('/api/sessions/{session_id}/corrections', status_code=201)
+def create_correction(session_id: str, body: dict) -> dict:
+    _, data, source = review_context(session_id, verified=True)
+    return guarded(lambda: correction_store().create(session_id, data, source, body))
+
+
+@app.patch('/api/sessions/{session_id}/corrections/{annotation_id}')
+def move_correction(session_id: str, annotation_id: str, body: dict) -> dict:
+    _, _, source = review_context(session_id, verified=True)
+    return guarded(lambda: correction_store().move(session_id, source, annotation_id, body.get('bbox')))
+
+
+@app.delete('/api/sessions/{session_id}/corrections/{annotation_id}')
+def delete_correction(session_id: str, annotation_id: str) -> dict:
+    review_context(session_id)
+    if not correction_store().delete(session_id, annotation_id):
+        raise HTTPException(404, 'Unknown or already removed annotation')
+    return {'deleted': annotation_id}
+
+
+@app.post('/api/sessions/{session_id}/corrections/{annotation_id}/restore')
+def restore_correction(session_id: str, annotation_id: str) -> dict:
+    review_context(session_id, verified=True)
+    return guarded(lambda: correction_store().restore(session_id, annotation_id))
+
+
+@app.put('/api/sessions/{session_id}/review/frames/{frame_index}/complete')
+def mark_frame_complete(session_id: str, frame_index: int, body: dict) -> dict:
+    _, data, _ = review_context(session_id, verified=True)
+    complete = bool(body.get('complete'))
+    guarded(lambda: correction_store().set_complete(session_id, frame_index, complete, len(data.frames)))
+    return {'frame_index': frame_index, 'complete': complete}
+
+
+@app.post('/api/sessions/{session_id}/exports', status_code=201)
+def create_export(session_id: str) -> dict:
+    run, data, source = review_context(session_id, verified=True)
+    corrections = correction_store()
+    return guarded(lambda: write_export(data_dir / 'exports', session_id, data, source, corrections.active(session_id),
+                                        corrections.complete_frames(session_id), model_record_of(run)))
+
+
+@app.get('/api/sessions/{session_id}/exports')
+def exports(session_id: str) -> dict:
+    review_context(session_id)
+    return {'exports': list_exports(data_dir / 'exports', session_id)}
+
+
+@app.get('/api/sessions/{session_id}/exports/{export_id}/{name}')
+def export_file(session_id: str, export_id: str, name: str) -> FileResponse:
+    review_context(session_id)
+    if name not in EXPORT_FILES or not re.fullmatch(r'v\d{4}', export_id):
+        raise HTTPException(404)
+    file = (data_dir / 'exports' / session_id / export_id / name).resolve()
+    if not file.is_file() or not safe_under(file, data_dir / 'exports'):
         raise HTTPException(404)
     return FileResponse(file)

@@ -11,3 +11,10 @@ node_modules/
 dist/
 runs/
 test-results/
+*.onnx
+*.pth
+*.ckpt
+*.safetensors
+*.engine
+*.mov
+*.avi

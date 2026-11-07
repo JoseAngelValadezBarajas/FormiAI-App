@@ -28,6 +28,9 @@ class Store:
         return None if not row else dict(zip(('id','status','source_name','output_dir','command_json','message','session_id'),row))
     def session(self,id:str,artifact_dir:Path,status:str='ready')->None:
         with self.connect() as db: db.execute('INSERT OR REPLACE INTO sessions VALUES (?,?,?)',(id,str(artifact_dir),status))
+    def sessions(self):
+        with self.connect() as db: rows=db.execute('SELECT id,artifact_dir,status FROM sessions ORDER BY rowid').fetchall()
+        return [dict(zip(('id','artifact_dir','status'),row)) for row in rows]
     def get_session(self,id:str):
         with self.connect() as db: row=db.execute('SELECT id,artifact_dir,status FROM sessions WHERE id=?',(id,)).fetchone()
         return None if not row else dict(zip(('id','artifact_dir','status'),row))
